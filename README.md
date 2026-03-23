@@ -1,7 +1,7 @@
 # sdk-upstream-sync
 
-[![npm version](https://img.shields.io/npm/v/sdk-upstream-sync.svg)](https://www.npmjs.com/package/sdk-upstream-sync)
-[![npm downloads](https://img.shields.io/npm/dm/sdk-upstream-sync.svg)](https://www.npmjs.com/package/sdk-upstream-sync)
+[![npm version](https://img.shields.io/npm/v/%40nometria-ai%2Fsdk-upstream-sync.svg)](https://www.npmjs.com/package/@nometria-ai/sdk-upstream-sync)
+[![npm downloads](https://img.shields.io/npm/dm/%40nometria-ai%2Fsdk-upstream-sync.svg)](https://www.npmjs.com/package/@nometria-ai/sdk-upstream-sync)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 [![GitHub Marketplace](https://img.shields.io/badge/GitHub-Marketplace-blue)](https://github.com/marketplace)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -16,7 +16,7 @@ If you maintain a fork of any npm/GitHub SDK, you know the pain: upstream ships 
 
 ```bash
 # Install
-npm install --save-dev sdk-upstream-sync
+npm install --save-dev @nometria-ai/sdk-upstream-sync
 
 # Set required env vars
 export UPSTREAM_REPO=original-org/javascript-sdk
@@ -108,10 +108,10 @@ jobs:
 
 ```bash
 # Install globally
-npm install -g sdk-upstream-sync
+npm install -g @nometria-ai/sdk-upstream-sync
 
 # Or run without installing
-npx sdk-upstream-sync
+npx @nometria-ai/sdk-upstream-sync
 ```
 
 ### Usage
@@ -173,9 +173,9 @@ If **any** threshold is exceeded → generates `sync/report.md` and exits with s
 ## Use as a library
 
 ```js
-import { syncUpstream } from 'sdk-upstream-sync';
-import { extractContract } from 'sdk-upstream-sync/contracts';
-import { diffContracts } from 'sdk-upstream-sync/diff';
+import { syncUpstream } from '@nometria-ai/sdk-upstream-sync';
+import { extractContract } from '@nometria-ai/sdk-upstream-sync/contracts';
+import { diffContracts } from '@nometria-ai/sdk-upstream-sync/diff';
 
 // Full sync
 const result = await syncUpstream({
