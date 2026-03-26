@@ -1,6 +1,6 @@
 {
   "name": "@nometria-ai/sdk-upstream-sync",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Contract-aware sync tool for SDK forks. Auto-applies safe upstream changes. Flags breaking ones. CLI and GitHub Action.",
   "type": "module",
   "bin": {
