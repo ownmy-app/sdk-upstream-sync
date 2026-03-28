@@ -3,56 +3,115 @@
 [![npm version](https://img.shields.io/npm/v/%40nometria-ai%2Fsdk-upstream-sync.svg)](https://www.npmjs.com/package/@nometria-ai/sdk-upstream-sync)
 [![npm downloads](https://img.shields.io/npm/dm/%40nometria-ai%2Fsdk-upstream-sync.svg)](https://www.npmjs.com/package/@nometria-ai/sdk-upstream-sync)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
-[![GitHub Marketplace](https://img.shields.io/badge/GitHub-Marketplace-blue)](https://github.com/marketplace)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> Contract-aware fork maintenance. Auto-applies safe upstream changes. Flags breaking ones.
+> Contract-aware fork maintenance for **any language**. Auto-applies safe upstream changes. Flags breaking ones.
 
-If you maintain a fork of any npm/GitHub SDK, you know the pain: upstream ships changes, your fork drifts, you find out when something breaks in production. This tool solves it with a safety gate — it diffs API contracts, auto-applies small safe changes, and generates an investigation report for everything risky.
+Maintaining a fork of a third-party SDK, an internal shared library, or a vendored dependency? This tool diffs API contracts between upstream and your local version, auto-applies small safe changes, and generates an investigation report for anything risky — across **npm, pip, Go, Rust, Java, and C#**.
 
 ---
 
-## Quick start
+## Quick start (2 commands)
 
 ```bash
-# Install
-npm install --save-dev @nometria-ai/sdk-upstream-sync
+# 1. Init config (one time)
+npx sdk-sync init stripe/stripe-node
 
-# Set required env vars
-export UPSTREAM_REPO=original-org/javascript-sdk
-export GITHUB_TOKEN=ghp_...   # for API access
-
-# Run sync from your fork directory
+# 2. Run sync
 npx sdk-sync
-
-# Or add to package.json scripts:
-# "sync": "UPSTREAM_REPO=original-org/sdk node src/upstream-sync.mjs"
 ```
 
-Required environment variables:
+That's it. No env vars needed after init.
+
+---
+
+## Install
+
 ```bash
-UPSTREAM_REPO=org/sdk-name          # required: upstream GitHub repo
-GITHUB_TOKEN=ghp_...                # recommended: avoids rate limits
-UPSTREAM_BRANCH=main                # optional, default: main
-MAX_FILES=20                        # optional, auto-apply threshold
-MAX_LOC=600                         # optional, auto-apply threshold
+# From npm
+npm install -g @nometria-ai/sdk-upstream-sync
+
+# Or use without installing
+npx sdk-sync
 ```
 
 ---
 
 ## How it works
 
-1. **Fetch** upstream SHA — exits cleanly if already synced
-2. **Extract contracts** — reads exports, methods, and module structure from both upstream and your local fork via the GitHub API
-3. **Diff contracts** — detects removed exports/methods as breaking changes, new ones as safe additions
-4. **Check thresholds** — auto-applies if: ≤ 20 files changed, ≤ 600 LOC, zero breaking changes
-5. **Apply or report** — patches your fork directly, or generates `sync/report.md` for manual review
+```
+npx sdk-sync
+    │
+    ├─ 1. Fetch latest upstream SHA from GitHub
+    ├─ 2. Auto-detect ecosystem (npm/pip/go/cargo/maven/nuget)
+    ├─ 3. Extract API contracts (exports, classes, methods)
+    │     ├─ Upstream: via GitHub API
+    │     └─ Local: walks your source tree
+    ├─ 4. Diff contracts → new exports, removed exports, breaking changes
+    ├─ 5. Check safety thresholds (max files, max LOC, zero breaking)
+    │     ├─ ✅ Safe → auto-apply changes
+    │     └─ ⚠️  Unsafe → generate sync/report.md for review
+    └─ Done
+```
 
 ---
 
-## GitHub Action (recommended)
+## Supported ecosystems
 
-The easiest way to use `sdk-upstream-sync` is as a scheduled GitHub Action:
+| Ecosystem | Languages | What it extracts |
+|-----------|-----------|-----------------|
+| **npm** | JS, TS, JSX, TSX | `export function/class/const`, `module.exports`, re-exports |
+| **pip** | Python | `__all__`, public functions, classes, `__init__.py` re-exports |
+| **go** | Go | Uppercase exported identifiers (func, type, const, var) |
+| **cargo** | Rust | `pub fn/struct/enum/trait/type/mod/const/static`, impl methods |
+| **maven** | Java, Kotlin | `public class/interface/enum/record`, public methods |
+| **nuget** | C# | `public class/interface/struct/enum`, methods, properties |
+
+Ecosystem is auto-detected from your project files (`package.json` → npm, `pyproject.toml` → pip, `go.mod` → go, etc). Override in config if needed.
+
+---
+
+## Config file
+
+`sdk-sync.config.json` (created by `npx sdk-sync init`):
+
+```json
+{
+  "upstream": "stripe/stripe-node",
+  "branch": "main",
+  "ecosystem": "auto",
+  "ignore": ["node_modules/**", "dist/**", ".git/**", "__pycache__/**"],
+  "maxFiles": 20,
+  "maxLoc": 600
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `upstream` | — | Upstream GitHub repo (`org/repo`). **Required**. |
+| `branch` | `main` | Upstream branch to track |
+| `ecosystem` | `auto` | `auto` \| `npm` \| `pip` \| `go` \| `cargo` \| `maven` \| `nuget` |
+| `ignore` | `[]` | Glob patterns to skip during contract scanning |
+| `maxFiles` | `20` | Auto-apply if ≤ this many files changed |
+| `maxLoc` | `600` | Auto-apply if ≤ this many lines changed |
+
+All values can also be set via env vars (`UPSTREAM_REPO`, `UPSTREAM_BRANCH`, `ECOSYSTEM`, `MAX_FILES`, `MAX_LOC`, `GITHUB_TOKEN`).
+
+---
+
+## CLI commands
+
+```bash
+npx sdk-sync              # Run sync (default)
+npx sdk-sync init [repo]  # Create config file
+npx sdk-sync diff         # Show diff without applying
+npx sdk-sync report       # Generate report only
+npx sdk-sync --help       # Show help
+```
+
+---
+
+## GitHub Action
 
 ```yaml
 # .github/workflows/sync-upstream.yml
@@ -61,7 +120,7 @@ name: Sync upstream SDK
 on:
   schedule:
     - cron: '0 9 * * 1'    # every Monday at 9am
-  workflow_dispatch:         # allow manual trigger
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -73,9 +132,8 @@ jobs:
 
       - uses: nometria/sdk-upstream-sync@v1
         with:
-          upstream_repo: 'original-org/javascript-sdk'
+          upstream_repo: 'stripe/stripe-node'
           upstream_branch: 'main'
-          local_path: './lib'
           max_files: '20'
           max_loc: '600'
           create_pr: 'true'
@@ -86,74 +144,94 @@ jobs:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `upstream_repo` | yes | — | Upstream GitHub repo (`org/repo`) |
+| `upstream_repo` | yes | — | Upstream GitHub repo |
 | `upstream_branch` | no | `main` | Branch to track |
-| `local_path` | no | `.` | Path to your local fork directory |
-| `max_files` | no | `20` | Max files changed for auto-apply |
-| `max_loc` | no | `600` | Max lines changed for auto-apply |
-| `create_pr` | no | `false` | Open a PR instead of committing directly |
-| `github_token` | no | `${{ github.token }}` | Token for API access and PR creation |
-
-### Action outputs
-
-| Output | Description |
-|--------|-------------|
-| `synced` | `true` if changes were applied |
-| `status` | `already_up_to_date` \| `auto_applied` \| `investigation_required` \| `error` |
-| `report_path` | Path to the generated sync report |
+| `local_path` | no | `.` | Path to local fork |
+| `max_files` | no | `20` | Auto-apply file threshold |
+| `max_loc` | no | `600` | Auto-apply LOC threshold |
+| `create_pr` | no | `false` | Open PR instead of direct commit |
+| `github_token` | no | `${{ github.token }}` | Token for API access |
 
 ---
 
-## CLI
+## Use cases
+
+### 1. Third-party SDK fork maintenance
+
+You vendor Stripe's Node SDK, add custom retry logic, and need to stay in sync:
 
 ```bash
-# Install globally
-npm install -g @nometria-ai/sdk-upstream-sync
-
-# Or run without installing
+npx sdk-sync init stripe/stripe-node
 npx sdk-sync
 ```
 
-### Usage
+Every Monday, the GitHub Action checks for upstream changes. Safe changes (new exports, small patches) are auto-applied. Breaking changes (removed methods) generate a report for manual review.
 
-```bash
-# Run from your fork directory
-UPSTREAM_REPO=original-org/javascript-sdk npx sdk-sync
+### 2. Cross-team shared SDK (enterprise)
 
-# With all options
-UPSTREAM_REPO=original-org/javascript-sdk \
-  UPSTREAM_BRANCH=main \
-  LOCAL_MIRROR_DIR=./lib \
-  MAX_FILES=20 \
-  MAX_LOC=600 \
-  node src/upstream-sync.mjs
+Your company has a Platform team that publishes an internal SDK (`company/platform-sdk`). Three product teams fork it and add team-specific extensions:
+
+```
+company/platform-sdk (upstream)
+  ├── team-payments/platform-sdk (fork)
+  ├── team-identity/platform-sdk (fork)
+  └── team-analytics/platform-sdk (fork)
 ```
 
-### Environment variables
+Each team runs `sdk-sync` weekly. When Platform ships a new method, all forks get it automatically. When Platform removes a deprecated method, each team gets a report before anything breaks.
+
+**Works with any language** — the Platform SDK can be Python, Go, Java, or anything else.
+
+### 3. Multi-language monorepo
+
+Your monorepo has client SDKs in multiple languages that mirror an upstream API:
+
+```json
+// sdk-sync.config.json in /clients/python/
+{ "upstream": "company/api-spec", "ecosystem": "pip" }
+
+// sdk-sync.config.json in /clients/go/
+{ "upstream": "company/api-spec", "ecosystem": "go" }
+```
+
+Run `sdk-sync` in each client directory to keep all SDKs aligned with the spec.
+
+### 4. Open-source library migration
+
+You depend on an open-source library that's being rewritten (v2 → v3). Track the upstream rewrite branch to understand what's changing in the public API before migration day:
 
 ```bash
-export UPSTREAM_REPO=original-org/javascript-sdk
-export UPSTREAM_BRANCH=main
-export LOCAL_MIRROR_DIR=./lib
-export MAX_FILES=20
-export MAX_LOC=600
-export GITHUB_TOKEN=ghp_...    # for private repos and higher rate limits
-export SYNC_DIR=./sync         # where contract/report files are written (default: ./sync)
+npx sdk-sync init some-org/library
+# Edit config: "branch": "v3-rewrite"
+npx sdk-sync diff
+# Review sync/report.md to understand breaking changes
 ```
+
+### 5. Vendor lock-in prevention
+
+You vendor a cloud provider's SDK to add an abstraction layer. Monitor upstream for new features you want to surface, and breaking changes that would affect your abstraction:
+
+```bash
+npx sdk-sync init aws/aws-sdk-js-v3
+npx sdk-sync report
+# Check sync/contract.diff.json for new services/methods
+```
+
+### 6. Compliance & audit trail
+
+In regulated industries, every change to a dependency must be documented. `sdk-sync` generates `sync/report.md` with a full diff of every export and method change, with timestamps and commit SHAs — ready for audit.
 
 ---
 
 ## Generated files
 
-After each run, `sdk-upstream-sync` writes to `sync/`:
-
 ```
 sync/
-├── upstream.json           ← last synced SHA (used for change detection)
-├── upstream.contract.json  ← upstream API surface (exports, methods)
-├── local.contract.json     ← local fork API surface
-├── contract.diff.json      ← set differences (added/removed exports & methods)
-└── report.md               ← human-readable investigation report
+├── upstream.json            ← last synced SHA + timestamp
+├── upstream.contract.json   ← upstream API surface
+├── local.contract.json      ← local fork API surface
+├── contract.diff.json       ← set differences
+└── report.md                ← human-readable report
 ```
 
 ---
@@ -162,42 +240,30 @@ sync/
 
 | Threshold | Default | Auto-applies if… |
 |-----------|---------|-----------------|
-| `max_files` | 20 | ≤ 20 files changed |
-| `max_loc` | 600 | ≤ 600 lines changed |
+| `maxFiles` | 20 | ≤ 20 files changed |
+| `maxLoc` | 600 | ≤ 600 lines changed |
 | Breaking changes | 0 | Zero removed exports or methods |
 
-If **any** threshold is exceeded → generates `sync/report.md` and exits with status `investigation_required` instead of applying changes.
+If **any** threshold is exceeded → `sync/report.md` is generated and status is `investigation_required`.
 
 ---
 
-## Use as a library
+## Library API
 
 ```js
 import { syncUpstream } from '@nometria-ai/sdk-upstream-sync';
-import { extractContract } from '@nometria-ai/sdk-upstream-sync/contracts';
-import { diffContracts } from '@nometria-ai/sdk-upstream-sync/diff';
 
-// Full sync
 const result = await syncUpstream({
-  upstreamRepo: 'original-org/javascript-sdk',
-  upstreamBranch: 'main',
-  localPath: './lib',
+  upstream: 'org/sdk',
+  branch: 'main',
+  ecosystem: 'pip',     // or 'npm', 'go', etc.
   maxFiles: 20,
   maxLoc: 600,
-  githubToken: process.env.GITHUB_TOKEN,
 });
 
-console.log(result.status);   // 'auto_applied' | 'investigation_required' | 'already_up_to_date'
+console.log(result.status);
+// 'auto_applied' | 'investigation_required' | 'already_up_to_date'
 ```
-
----
-
-## When to use this
-
-- You vendor or fork a third-party SDK and need to stay in sync with upstream
-- Your fork adds proprietary patches on top of an open-source library
-- You want automated weekly sync with safety gates instead of manual cherry-picking
-- You want audit trails of every upstream change that affected your fork
 
 ---
 
@@ -210,26 +276,3 @@ PRs welcome. Run tests with `npm test`.
 ## License
 
 MIT © [Nometria](https://nometria.com)
-
----
-
-## Example output
-
-Running `node --test tests/upstream-sync.test.mjs`:
-
-```
-✔ UPSTREAM_REPO env var is read correctly (0.380166ms)
-✔ LOCAL_MIRROR_DIR defaults to ./sdk-mirror (0.063ms)
-✔ MAX_FILES is parsed as integer (0.06675ms)
-✔ MAX_LOC is parsed as integer (0.054833ms)
-ℹ tests 4
-ℹ suites 0
-ℹ pass 4
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 0
-ℹ todo 0
-ℹ duration_ms 59.318041
-```
-
-See `examples/sample-report.md` for a realistic sync report and `examples/sample-contract.json` for what a contract file looks like.

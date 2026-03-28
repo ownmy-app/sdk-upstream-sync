@@ -1,76 +1,97 @@
 /**
- * Extract API contract from upstream repository
+ * Extract API contract from an upstream GitHub repository.
+ *
+ * Uses the GitHub Trees API to fetch file contents, then delegates to the
+ * ecosystem extractor for language-specific export/method detection.
  */
 
-export async function extractUpstreamContract(repo, sha) {
-  // Clone or fetch repository
-  const contract = {
-    exports: [],
-    modules: {},
-    version: sha,
-  };
+import { getEcosystem } from './ecosystems/index.mjs';
 
-  // Fetch package.json to get exports
-  const packageUrl = `https://raw.githubusercontent.com/${repo}/${sha}/package.json`;
-  const packageResponse = await fetch(packageUrl);
-  
-  if (packageResponse.ok) {
-    const pkg = await packageResponse.json();
-    contract.version = pkg.version;
+/**
+ * @param {string} repo     — "org/repo"
+ * @param {string} sha      — commit SHA to inspect
+ * @param {object} opts
+ * @param {string} opts.ecosystem   — npm | pip | go | cargo | maven | nuget
+ * @param {string[]} opts.ignore    — glob-like prefixes to skip
+ * @param {string|null} opts.githubToken
+ */
+export async function extractUpstreamContract(repo, sha, opts = {}) {
+  const eco = getEcosystem(opts.ecosystem || 'npm');
+  const extensions = eco.fileExtensions();
+
+  const contract = { exports: [], modules: {}, methods: [], version: sha };
+
+  // Fetch the full tree
+  const headers = { Accept: 'application/vnd.github.v3+json' };
+  if (opts.githubToken) headers.Authorization = `Bearer ${opts.githubToken}`;
+
+  const treeUrl = `https://api.github.com/repos/${repo}/git/trees/${sha}?recursive=1`;
+  const treeRes = await fetch(treeUrl, { headers });
+
+  if (!treeRes.ok) {
+    console.warn(`⚠️  Could not fetch tree (${treeRes.status}). Falling back to shallow scan.`);
+    return contract;
   }
 
-  // Fetch main entry file
-  const entryUrl = `https://raw.githubusercontent.com/${repo}/${sha}/src/index.js`;
-  const entryResponse = await fetch(entryUrl);
-  
-  if (entryResponse.ok) {
-    const content = await entryResponse.text();
-    contract.exports = extractExports(content);
+  const tree = await treeRes.json();
+  const files = (tree.tree || []).filter(f => {
+    if (f.type !== 'blob') return false;
+    const ext = '.' + f.path.split('.').pop();
+    if (!extensions.has(ext)) return false;
+    // Skip ignored prefixes
+    for (const ig of (opts.ignore || [])) {
+      if (f.path.startsWith(ig.replace('**', '').replace('*', ''))) return false;
+    }
+    return true;
+  });
+
+  // Fetch file contents in batches (limit concurrent requests)
+  const BATCH = 10;
+  const allExports = new Set();
+  const allMethods = [];
+
+  for (let i = 0; i < files.length; i += BATCH) {
+    const batch = files.slice(i, i + BATCH);
+    const results = await Promise.all(
+      batch.map(async (f) => {
+        const url = `https://raw.githubusercontent.com/${repo}/${sha}/${f.path}`;
+        try {
+          const res = await fetch(url, { headers: opts.githubToken ? { Authorization: `Bearer ${opts.githubToken}` } : {} });
+          if (!res.ok) return null;
+          return { path: f.path, content: await res.text() };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    for (const r of results) {
+      if (!r) continue;
+      const exports = eco.extractExports(r.content, r.path);
+      exports.forEach(e => allExports.add(e));
+      const methods = eco.extractMethods(r.content);
+      allMethods.push(...methods);
+    }
   }
 
-  // Extract module structure (simplified - would need to fetch more files)
-  contract.modules = {
-    entities: extractModuleMethods('entities'),
-    auth: extractModuleMethods('auth'),
-    functions: extractModuleMethods('functions'),
-    integrations: extractModuleMethods('integrations'),
-    agents: extractModuleMethods('agents'),
-    appLogs: extractModuleMethods('appLogs'),
-    analytics: extractModuleMethods('analytics'),
-    users: extractModuleMethods('users'),
-  };
+  contract.exports = [...allExports];
+  contract.methods = allMethods;
+
+  // Group methods by module
+  for (const m of allMethods) {
+    if (!contract.modules[m.module]) contract.modules[m.module] = [];
+    contract.modules[m.module].push(m.method);
+  }
+
+  // Try to get version from package.json / pyproject.toml
+  try {
+    const pkgUrl = `https://raw.githubusercontent.com/${repo}/${sha}/package.json`;
+    const pkgRes = await fetch(pkgUrl, { headers: opts.githubToken ? { Authorization: `Bearer ${opts.githubToken}` } : {} });
+    if (pkgRes.ok) {
+      const pkg = await pkgRes.json();
+      if (pkg.version) contract.version = pkg.version;
+    }
+  } catch { /* ignore */ }
 
   return contract;
-}
-
-function extractExports(content) {
-  const exports = [];
-  
-  // Match export statements
-  const exportRegex = /export\s+(?:async\s+)?function\s+(\w+)|export\s+const\s+(\w+)|export\s+class\s+(\w+)|export\s+default\s+(\w+)/g;
-  let match;
-  
-  while ((match = exportRegex.exec(content)) !== null) {
-    const name = match[1] || match[2] || match[3] || match[4];
-    if (name) exports.push(name);
-  }
-
-  return exports;
-}
-
-function extractModuleMethods(moduleName) {
-  // This would fetch the actual module file and extract methods
-  // For now, return known methods
-  const knownMethods = {
-    entities: ['list', 'get', 'create', 'update', 'delete', 'deleteMany', 'bulkCreate', 'importEntities', 'subscribe'],
-    auth: ['me', 'updateMe', 'loginWithProvider', 'loginViaEmailPassword', 'logout', 'setToken', 'isAuthenticated', 'inviteUser', 'register', 'verifyOtp', 'resendOtp', 'resetPasswordRequest', 'resetPassword', 'changePassword', 'redirectToLogin'],
-    functions: ['invoke'],
-    integrations: [], // Proxy pattern
-    agents: ['listConversations', 'createConversation', 'addMessage', 'subscribe'],
-    appLogs: ['log', 'getLogs'],
-    analytics: ['track'],
-    users: ['inviteUser'],
-  };
-
-  return knownMethods[moduleName] || [];
 }

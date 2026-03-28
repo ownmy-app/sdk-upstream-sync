@@ -1,74 +1,87 @@
 /**
- * Extract API contract from local codebase
+ * Extract API contract from local codebase.
+ *
+ * Walks the source tree, delegates to the ecosystem extractor for
+ * language-specific export/method detection.
  */
 
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join, extname } from 'path';
+import { getEcosystem } from './ecosystems/index.mjs';
 
-export function extractLocalContract() {
-  const contract = {
-    exports: [],
-    modules: {},
-  };
+/**
+ * @param {object} opts
+ * @param {string} opts.localPath   — root of the local fork
+ * @param {string} opts.ecosystem   — npm | pip | go | cargo | maven | nuget
+ * @param {string[]} opts.ignore    — glob-like prefixes to skip
+ */
+export function extractLocalContract(opts = {}) {
+  const localPath = opts.localPath || process.cwd();
+  const eco = getEcosystem(opts.ecosystem || 'npm');
+  const extensions = eco.fileExtensions();
+  const ignore = opts.ignore || [];
 
-  // Extract from exports file
-  const exportsFile = join(process.cwd(), 'src', 'compat', 'exports.js');
-  try {
-    const content = readFileSync(exportsFile, 'utf-8');
-    contract.exports = extractExports(content);
-  } catch {
-    // File doesn't exist
-  }
+  const contract = { exports: [], modules: {}, methods: [] };
+  const allExports = new Set();
+  const allMethods = [];
 
-  // Extract modules from client.js
-  const clientFile = join(process.cwd(), 'src', 'compat', 'client.js');
-  try {
-    const content = readFileSync(clientFile, 'utf-8');
-    contract.modules = extractModules(content);
-  } catch {
-    // File doesn't exist
+  // Walk the directory tree
+  walkDir(localPath, (filePath, relPath) => {
+    const ext = extname(filePath);
+    if (!extensions.has(ext)) return;
+
+    // Skip ignored paths
+    for (const ig of ignore) {
+      const prefix = ig.replace(/\*\*/g, '').replace(/\*/g, '').replace(/\/$/, '');
+      if (relPath.startsWith(prefix) || relPath.includes(`/${prefix}`)) return;
+    }
+
+    try {
+      const content = readFileSync(filePath, 'utf-8');
+      const exports = eco.extractExports(content, relPath);
+      exports.forEach(e => allExports.add(e));
+      const methods = eco.extractMethods(content);
+      allMethods.push(...methods);
+    } catch {
+      // Skip unreadable files
+    }
+  });
+
+  contract.exports = [...allExports];
+  contract.methods = allMethods;
+
+  for (const m of allMethods) {
+    if (!contract.modules[m.module]) contract.modules[m.module] = [];
+    contract.modules[m.module].push(m.method);
   }
 
   return contract;
 }
 
-function extractExports(content) {
-  const exports = [];
-  
-  const exportRegex = /export\s+(?:async\s+)?function\s+(\w+)|export\s+const\s+(\w+)|export\s+class\s+(\w+)|export\s+default\s+(\w+)/g;
-  let match;
-  
-  while ((match = exportRegex.exec(content)) !== null) {
-    const name = match[1] || match[2] || match[3] || match[4];
-    if (name) exports.push(name);
+function walkDir(dir, callback, rootDir = dir) {
+  const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '__pycache__', '.tox', 'target', 'bin', 'obj', 'vendor']);
+
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
   }
 
-  return exports;
-}
-
-function extractModules(content) {
-  const modules = {};
-
-  // Extract module methods from factory functions
-  const modulePatterns = {
-    entities: /entities\.(\w+)\s*=/g,
-    auth: /auth\.(\w+)\s*=/g,
-    functions: /functions\.(\w+)\s*=/g,
-    integrations: /integrations\.(\w+)\s*=/g,
-    agents: /agents\.(\w+)\s*=/g,
-    appLogs: /appLogs\.(\w+)\s*=/g,
-    analytics: /analytics\.(\w+)\s*=/g,
-    users: /users\.(\w+)\s*=/g,
-  };
-
-  for (const [moduleName, pattern] of Object.entries(modulePatterns)) {
-    const methods = [];
-    let match;
-    while ((match = pattern.exec(content)) !== null) {
-      methods.push(match[1]);
+  for (const entry of entries) {
+    if (SKIP.has(entry)) continue;
+    const full = join(dir, entry);
+    let stat;
+    try {
+      stat = statSync(full);
+    } catch {
+      continue;
     }
-    modules[moduleName] = methods;
+    if (stat.isDirectory()) {
+      walkDir(full, callback, rootDir);
+    } else if (stat.isFile()) {
+      const relPath = full.slice(rootDir.length + 1);
+      callback(full, relPath);
+    }
   }
-
-  return modules;
 }
